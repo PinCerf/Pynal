@@ -1,6 +1,7 @@
 """Лабораторная: сравнение Bagging, Random Forest, LightGBM и CatBoost по macro F1."""
 
 from pathlib import Path
+from io import StringIO
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -20,6 +21,44 @@ from sklearn.tree import DecisionTreeClassifier
 
 SEED = 42
 
+# Названия моделей и гиперпараметров для понятного вывода.
+MODEL_NAMES = {
+    "Bagging": "Бэггинг (Bagging)",
+    "Random Forest": "Случайный лес (Random Forest)",
+    "LightGBM": "Градиентный бустинг LightGBM",
+    "CatBoost": "Градиентный бустинг CatBoost",
+}
+
+PARAM_NAMES = {
+    "n_estimators": "Количество деревьев",
+    "iterations": "Количество итераций",
+    "max_depth": "Максимальная глубина дерева",
+    "estimator__max_depth": "Максимальная глубина базового дерева",
+    "depth": "Глубина дерева",
+    "min_samples_leaf": "Минимум объектов в листе",
+    "estimator__min_samples_leaf": "Минимум объектов в листе базового дерева",
+    "max_samples": "Доля обучающих объектов для дерева",
+    "class_weight": "Балансировка классов",
+    "num_leaves": "Максимум листьев дерева",
+    "learning_rate": "Скорость обучения",
+    "min_child_samples": "Минимум объектов в листе",
+    "l2_leaf_reg": "L2-регуляризация",
+}
+
+
+def explain_param(key, value):
+    """Переводим название и значение гиперпараметра на понятный русский."""
+    title = PARAM_NAMES.get(key, key)
+    if value is None and "depth" in key:
+        value = "без ограничения"
+    elif value is None and key == "class_weight":
+        value = "без дополнительных весов"
+    elif value == "balanced_subsample":
+        value = "балансировка в каждом дереве"
+    return f"  {title}: {value}"
+
+
+
 
 def load_data():
     """Берём локальный creditcard.csv или скачиваем его с Kaggle."""
@@ -27,7 +66,7 @@ def load_data():
     if not csv_file.exists():
         import kagglehub
 
-        print("Файл не найден рядом со скриптом. Скачиваем датасет с Kaggle...")
+        print("Исходный файл creditcard.csv не найден. Загружаем данные с Kaggle...")
         folder = kagglehub.dataset_download("mlg-ulb/creditcardfraud")
         csv_file = Path(folder) / "creditcard.csv"
 
@@ -108,8 +147,14 @@ def main():
     df = load_data()
     X = df.drop(columns="Class")
     y = df["Class"]
-    print("Всего транзакций:", len(df))
-    print("Распределение классов:\n", y.value_counts())
+    print("\n" + "=" * 68)
+    print("1. ИСХОДНЫЕ ДАННЫЕ")
+    print("=" * 68)
+    print(f"Всего транзакций: {len(df):,}".replace(",", " "))
+    print(f"Легальных транзакций (класс 0): {(y == 0).sum():,}".replace(",", " "))
+    print(f"Мошеннических транзакций (класс 1): {(y == 1).sum():,}".replace(",", " "))
+    print(f"Доля мошеннических: {(y == 1).mean() * 100:.3f}%")
+    print("Класс 0 — обычная транзакция, класс 1 — мошенничество.")
 
     # 2. Разбиение по условию: тест 30%, с той же долей классов.
     X_train, X_test, y_train, y_test = train_test_split(
@@ -122,6 +167,16 @@ def main():
         X_train, y_train, test_size=0.2, stratify=y_train, random_state=SEED,
     )
 
+    print("\n" + "=" * 68)
+    print("2. РАЗДЕЛЕНИЕ ДАННЫХ")
+    print("=" * 68)
+    print(f"Обучающая выборка (70%): {len(X_train)} транзакций.")
+    print(f"Тестовая выборка (30%): {len(X_test)} транзакций.")
+    print(f"Для обучения моделей: {len(X_fit)} транзакций.")
+    print(f"Для подбора порога: {len(X_val)} транзакций.")
+    print("Пропорции классов сохранены (stratify).")
+    print("Тестовая выборка НЕ используется при подборе параметров.")
+
     # ================================================================
     # ЗАДАНИЕ 2. ОПТИМИЗАЦИЯ ЧЕРЕЗ RandomizedSearchCV
     # ================================================================
@@ -133,7 +188,11 @@ def main():
     selected = {}
 
     for name, config in make_models().items():
-        print(f"\n=== {name}: поиск гиперпараметров ===")
+        print("\n" + "-" * 68)
+        print(f"3. НАСТРОЙКА МОДЕЛИ: {MODEL_NAMES[name]}")
+        print("-" * 68)
+        print(f"Проверяем {config['n_iter']} случайных наборов параметров.")
+        print("Для каждого набора выполняется трёхкратная кросс-валидация.")
         if name == "CatBoost":
             # ЗАДАНИЕ 3. CatBoost имеет встроенный randomized_search().
             # Он совместим с CatBoost и ищет параметры по macro F1.
@@ -151,6 +210,8 @@ def main():
                 search_by_train_test_split=False,
                 refit=True,
                 verbose=False,
+                log_cout=StringIO(),  # Скрываем служебные англоязычные логи CatBoost.
+                log_cerr=StringIO(),
             )
             best_params = cat_search["params"]
             cv_f1 = max(cat_search["cv_results"]["test-TotalF1:average=Macro-mean"])
@@ -179,9 +240,15 @@ def main():
             "val_f1": val_f1,
             "cv_f1": cv_f1,
         }
-        print("Лучшие гиперпараметры:", best_params)
-        print(f"Macro F1 на кросс-валидации: {cv_f1:.4f}")
-        print(f"Macro F1 на валидации: {val_f1:.4f}; порог: {threshold:.2f}")
+        print("Лучшие найденные параметры:")
+        for key, value in best_params.items():
+            print(explain_param(key, value))
+        print(f"Macro F1 при кросс-валидации: {cv_f1:.4f}")
+        print("  Это среднее качество на внутренних проверках при подборе параметров.")
+        print(f"Macro F1 на валидации: {val_f1:.4f}")
+        print("  Это качество на отдельной проверочной части обучающих данных.")
+        print(f"Лучший порог мошенничества: {threshold:.2f}")
+        print("  Если оценка вероятности класса 1 не ниже порога, модель ставит класс 1.")
 
     # 4. Переобучаем лучшие варианты на всех 70% train и оцениваем на test.
     results = []
@@ -202,26 +269,97 @@ def main():
         })
         predictions_by_model[name] = predictions
 
-    # 5. Таблица результатов; лучшая по тесту модель — для матрицы ошибок.
+    # ================================================================
+    # ЗАДАНИЕ 2. РЕЗУЛЬТАТЫ НА ТЕСТЕ И СРАВНЕНИЕ АЛГОРИТМОВ
+    # ================================================================
     table = pd.DataFrame(results).sort_values("test_macro_f1", ascending=False)
-    print("\nРЕЗУЛЬТАТЫ НА TEST (macro F1):")
-    print(table.to_string(index=False, float_format=lambda n: f"{n:.4f}"))
-    table.to_csv("results.csv", index=False)
 
+    readable = table.rename(columns={
+        "model": "Алгоритм",
+        "cv_macro_f1": "F1: кросс-валидация",
+        "validation_macro_f1": "F1: валидация",
+        "test_macro_f1": "F1: тест",
+        "threshold": "Порог",
+    }).copy()
+    readable["Алгоритм"] = readable["Алгоритм"].map(MODEL_NAMES)
+
+    print("\\n" + "=" * 68)
+    print("4. СРАВНЕНИЕ АЛГОРИТМОВ ПО MACRO F1")
+    print("=" * 68)
+    print(readable.to_string(index=False, float_format=lambda number: f"{number:.4f}"))
+    print("\\nРасшифровка таблицы:")
+    print("  F1: кросс-валидация — качество при подборе гиперпараметров.")
+    print("  F1: валидация — качество при подборе порога классификации.")
+    print("  F1: тест — главная итоговая оценка на новых данных.")
+    print("  Порог — начиная с какой оценки вероятности ставится класс 1.")
+    print("  Чем ближе Macro F1 к 1, тем лучше классификация.")
+    readable.to_csv("results.csv", index=False, sep=";", encoding="utf-8-sig")
+    print("Таблица сохранена: results.csv")
+
+    # Лучший алгоритм определяется по полному значению F1 на тесте.
     best_name = table.iloc[0]["model"]
     best_predictions = predictions_by_model[best_name]
-    print(f"\nЛучшая модель на тесте: {best_name}")
-    print(classification_report(y_test, best_predictions, digits=4))
+    report = classification_report(
+        y_test, best_predictions, output_dict=True, zero_division=0
+    )
 
-    # 6. Матрица ошибок — для метода с максимальным macro F1 на тесте.
+    print("\\n" + "=" * 68)
+    print("5. ЛУЧШАЯ МОДЕЛЬ И ЕЁ МЕТРИКИ")
+    print("=" * 68)
+    print(f"Лучший алгоритм: {MODEL_NAMES[best_name]}")
+    print(f"Macro F1 на тесте: {table.iloc[0]['test_macro_f1']:.4f}")
+    print("Это среднее F1 двух классов: обычных и мошеннических операций.")
+
+    print("\\nПоказатели по каждому классу:")
+    print(f"{'Класс':<24} {'Precision':>11} {'Recall':>9} {'F1':>9} {'Кол-во':>9}")
+    for key, title in [("0", "Легальные (0)"), ("1", "Мошеннические (1)")]:
+        row = report[key]
+        print(
+            f"{title:<24} {row['precision']:>11.4f} "
+            f"{row['recall']:>9.4f} {row['f1-score']:>9.4f} "
+            f"{int(row['support']):>9}"
+        )
+
+    print("\\nЧто означают метрики:")
+    print("  Precision — доля правильных срабатываний среди предсказаний класса.")
+    print("  Recall — доля найденных объектов среди всех реальных объектов класса.")
+    print("  F1 — общая оценка точности и полноты.")
+    print("  Кол-во — сколько объектов этого класса было в тестовой выборке.")
+    print(f"  Accuracy (общая доля правильных ответов): {report['accuracy']:.4f}")
+    print(f"  Macro F1 (равный вес обоих классов): {report['macro avg']['f1-score']:.4f}")
+    print("  При редком мошенничестве Macro F1 информативнее одной лишь Accuracy.")
+
+    # ================================================================
+    # ЗАДАНИЕ 2. МАТРИЦА ОШИБОК ЛУЧШЕЙ МОДЕЛИ
+    # ================================================================
     matrix = confusion_matrix(y_test, best_predictions, labels=[0, 1])
-    print("Матрица ошибок:\n", matrix)
+    tn, fp, fn, tp = matrix.ravel()
+
+    print("\\n" + "=" * 68)
+    print("6. МАТРИЦА ОШИБОК ЛУЧШЕЙ МОДЕЛИ")
+    print("=" * 68)
+    print("                       Предсказано 0    Предсказано 1")
+    print(f"Реально 0 (легальная)      {tn:>10}       {fp:>10}")
+    print(f"Реально 1 (мошенничество)  {fn:>10}       {tp:>10}")
+    print(f"  {tn} — верно распознаны легальные транзакции (TN).")
+    print(f"  {fp} — легальные ошибочно названы мошенническими (FP).")
+    print(f"  {fn} — мошеннические транзакции пропущены (FN).")
+    print(f"  {tp} — мошеннические транзакции найдены правильно (TP).")
+    print(f"  Всего мошеннических в тесте: {tp + fn}.")
+    print(f"  Обнаружено мошеннических: {tp} из {tp + fn} "
+          f"({tp / (tp + fn) * 100:.2f}%)." if (tp + fn) else
+          "  В тесте нет мошеннических транзакций.")
+
     ConfusionMatrixDisplay(
-        confusion_matrix=matrix, display_labels=["Legal", "Fraud"]
+        confusion_matrix=matrix,
+        display_labels=["Легальная (0)", "Мошенническая (1)"],
     ).plot(values_format="d", cmap="Blues")
-    plt.title(f"Confusion matrix: {best_name}")
+    plt.title(f"Матрица ошибок: {MODEL_NAMES[best_name]}")
+    plt.xlabel("Предсказанный класс")
+    plt.ylabel("Настоящий класс")
     plt.tight_layout()
     plt.savefig("confusion_matrix.png", dpi=150)
+    print("Матрица ошибок сохранена: confusion_matrix.png")
     plt.show()
 
 
