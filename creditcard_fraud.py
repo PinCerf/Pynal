@@ -15,7 +15,7 @@ from sklearn.metrics import (
     confusion_matrix,
     f1_score,
 )
-from sklearn.model_selection import train_test_split
+from sklearn.model_selection import RandomizedSearchCV, StratifiedKFold, train_test_split
 from sklearn.tree import DecisionTreeClassifier
 
 SEED = 42
@@ -49,52 +49,57 @@ def best_threshold(model, X_val, y_val):
 
 
 def make_models():
-    """Для каждого алгоритма: обычный и настроенный варианты."""
+    """Модели и параметры для автоматического случайного поиска (задание 2)."""
     return {
-        "Bagging": [
-            BaggingClassifier(
-                estimator=DecisionTreeClassifier(max_depth=8, random_state=SEED),
-                n_estimators=40, max_samples=0.8, n_jobs=-1, random_state=SEED,
+        "Bagging": {
+            "model": BaggingClassifier(
+                estimator=DecisionTreeClassifier(random_state=SEED),
+                n_jobs=-1, random_state=SEED,
             ),
-            BaggingClassifier(
-                estimator=DecisionTreeClassifier(
-                    max_depth=12, min_samples_leaf=3, class_weight="balanced", random_state=SEED
-                ),
-                n_estimators=80, max_samples=0.8, n_jobs=-1, random_state=SEED,
-            ),
-        ],
-        "Random Forest": [
-            RandomForestClassifier(
-                n_estimators=120, max_depth=10, n_jobs=-1, random_state=SEED,
-            ),
-            RandomForestClassifier(
-                n_estimators=220, min_samples_leaf=2,
-                class_weight="balanced_subsample", n_jobs=-1, random_state=SEED,
-            ),
-        ],
-        "LightGBM": [
-            LGBMClassifier(
-                n_estimators=200, learning_rate=0.05, num_leaves=15,
+            "params": {
+                "n_estimators": [40, 80, 120],          # Количество деревьев
+                "estimator__max_depth": [6, 10, 14],   # Глубина дерева
+                "estimator__min_samples_leaf": [1, 3],
+                "max_samples": [0.7, 0.9],             # Доля случайной выборки
+            },
+            "n_iter": 4,
+        },
+        "Random Forest": {
+            "model": RandomForestClassifier(n_jobs=-1, random_state=SEED),
+            "params": {
+                "n_estimators": [100, 200, 300],
+                "max_depth": [8, 12, None],
+                "min_samples_leaf": [1, 2, 4],
+                "class_weight": [None, "balanced_subsample"],
+            },
+            "n_iter": 4,
+        },
+        "LightGBM": {
+            "model": LGBMClassifier(
                 class_weight="balanced", verbose=-1, n_jobs=-1, random_state=SEED,
             ),
-            LGBMClassifier(
-                n_estimators=400, learning_rate=0.03, num_leaves=31,
-                min_child_samples=30, reg_lambda=1,
-                class_weight="balanced", verbose=-1, n_jobs=-1, random_state=SEED,
-            ),
-        ],
-        "CatBoost": [
-            CatBoostClassifier(
-                iterations=250, depth=5, learning_rate=0.08,
+            "params": {
+                "n_estimators": [200, 350, 500],
+                "learning_rate": [0.03, 0.05, 0.1],
+                "num_leaves": [15, 31, 63],
+                "min_child_samples": [20, 40],
+            },
+            "n_iter": 6,
+        },
+        "CatBoost": {
+            "model": CatBoostClassifier(
+                loss_function="Logloss", eval_metric="TotalF1:average=Macro",
                 auto_class_weights="Balanced", verbose=False,
                 thread_count=4, random_seed=SEED,
             ),
-            CatBoostClassifier(
-                iterations=450, depth=6, learning_rate=0.04,
-                l2_leaf_reg=5, auto_class_weights="Balanced",
-                verbose=False, thread_count=4, random_seed=SEED,
-            ),
-        ],
+            "params": {
+                "iterations": [250, 400, 550],
+                "depth": [4, 6, 8],
+                "learning_rate": [0.03, 0.05, 0.08],
+                "l2_leaf_reg": [3, 5, 7],
+            },
+            "n_iter": 4,
+        },
     }
 
 
@@ -117,21 +122,66 @@ def main():
         X_train, y_train, test_size=0.2, stratify=y_train, random_state=SEED,
     )
 
-    # 3. Сравниваем два набора параметров каждого метода на валидации.
+    # ================================================================
+    # ЗАДАНИЕ 2. ОПТИМИЗАЦИЯ ЧЕРЕЗ RandomizedSearchCV
+    # ================================================================
+    # RandomizedSearchCV случайно выбирает комбинации параметров из
+    # make_models() и сравнивает их по macro F1.
+    # cv=3: три раза обучаем и проверяем каждую комбинацию на частях X_fit.
+    # Все подборы выполняются ТОЛЬКО на TRAIN; X_test не используется.
+    cv = StratifiedKFold(n_splits=3, shuffle=True, random_state=SEED)
     selected = {}
-    for name, variants in make_models().items():
-        print(f"\n=== {name} ===")
-        for number, model in enumerate(variants, 1):
-            model.fit(X_fit, y_fit)
-            threshold, val_f1 = best_threshold(model, X_val, y_val)
-            print(f"Вариант {number}: macro F1={val_f1:.4f}, порог={threshold:.2f}")
 
-            if name not in selected or val_f1 > selected[name]["val_f1"]:
-                selected[name] = {
-                    "model": model,
-                    "threshold": threshold,
-                    "val_f1": val_f1,
-                }
+    for name, config in make_models().items():
+        print(f"\n=== {name}: поиск гиперпараметров ===")
+        if name == "CatBoost":
+            # ЗАДАНИЕ 3. CatBoost имеет встроенный randomized_search().
+            # Он совместим с CatBoost и ищет параметры по macro F1.
+            # Используем этот метод вместо RandomizedSearchCV, чтобы
+            # избежать несовместимости версий CatBoost и scikit-learn.
+            best_model = config["model"]
+            cat_search = best_model.randomized_search(
+                param_distributions=config["params"],
+                X=X_fit,
+                y=y_fit,
+                n_iter=config["n_iter"],
+                cv=3,
+                partition_random_seed=SEED,
+                stratified=True,
+                search_by_train_test_split=False,
+                refit=True,
+                verbose=False,
+            )
+            best_params = cat_search["params"]
+            cv_f1 = max(cat_search["cv_results"]["test-TotalF1:average=Macro-mean"])
+        else:
+            # ЗАДАНИЕ 2. RandomizedSearchCV: случайный перебор параметров.
+            search = RandomizedSearchCV(
+                estimator=config["model"],            # Настраиваемый алгоритм
+                param_distributions=config["params"], # Какие параметры перебираем
+                n_iter=config["n_iter"],              # Число случайных комбинаций
+                scoring="f1_macro",                  # Оптимизируем macro F1
+                cv=cv,                               # Трёхкратная стратифицированная CV
+                random_state=SEED,
+                n_jobs=1,                            # Параллельность внутри моделей
+                refit=True,
+            )
+            search.fit(X_fit, y_fit)
+            best_model = search.best_estimator_
+            best_params = search.best_params_
+            cv_f1 = search.best_score_
+
+        # Подбираем порог классификации по macro F1 на X_val.
+        threshold, val_f1 = best_threshold(best_model, X_val, y_val)
+        selected[name] = {
+            "model": best_model,
+            "threshold": threshold,
+            "val_f1": val_f1,
+            "cv_f1": cv_f1,
+        }
+        print("Лучшие гиперпараметры:", best_params)
+        print(f"Macro F1 на кросс-валидации: {cv_f1:.4f}")
+        print(f"Macro F1 на валидации: {val_f1:.4f}; порог: {threshold:.2f}")
 
     # 4. Переобучаем лучшие варианты на всех 70% train и оцениваем на test.
     results = []
@@ -145,6 +195,7 @@ def main():
 
         results.append({
             "model": name,
+            "cv_macro_f1": choice["cv_f1"],
             "validation_macro_f1": choice["val_f1"],
             "test_macro_f1": score,
             "threshold": choice["threshold"],
