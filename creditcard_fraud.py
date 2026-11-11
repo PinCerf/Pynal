@@ -2,6 +2,8 @@
 
 from pathlib import Path
 from io import StringIO
+from contextlib import redirect_stderr, redirect_stdout
+import sys
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -363,5 +365,30 @@ def main():
     plt.show()
 
 
+class Tee:
+    """Одновременно печатает результаты в терминал и сохраняет в файл."""
+
+    def __init__(self, terminal, report_file):
+        self.terminal = terminal
+        self.report_file = report_file
+
+    def write(self, text):
+        self.terminal.write(text)
+        self.report_file.write(text)
+
+    def flush(self):
+        self.terminal.flush()
+        self.report_file.flush()
+
+
 if __name__ == "__main__":
-    main()
+    # Каждый запуск создаёт один и тот же файл results.txt.
+    # Режим "w" полностью заменяет результаты предыдущего запуска.
+    # Все сообщения остаются видны в терминале.
+    with open("results.txt", "w", encoding="utf-8") as report_file:
+        with redirect_stdout(Tee(sys.stdout, report_file)):
+            with redirect_stderr(Tee(sys.stderr, report_file)):
+                main()
+
+    print("Полный текстовый отчёт сохранён в results.txt.")
+    print("При следующем запуске этот файл будет перезаписан.")
