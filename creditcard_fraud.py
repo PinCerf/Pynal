@@ -283,11 +283,11 @@ def main():
     }).copy()
     readable["Алгоритм"] = readable["Алгоритм"].map(MODEL_NAMES)
 
-    print("\\n" + "=" * 68)
+    print("\n" + "=" * 68)
     print("4. СРАВНЕНИЕ АЛГОРИТМОВ ПО MACRO F1")
     print("=" * 68)
     print(readable.to_string(index=False, float_format=lambda number: f"{number:.4f}"))
-    print("\\nРасшифровка таблицы:")
+    print("\nРасшифровка таблицы:")
     print("  F1: кросс-валидация — качество при подборе гиперпараметров.")
     print("  F1: валидация — качество при подборе порога классификации.")
     print("  F1: тест — главная итоговая оценка на новых данных.")
@@ -303,15 +303,15 @@ def main():
         y_test, best_predictions, output_dict=True, zero_division=0
     )
 
-    print("\\n" + "=" * 68)
+    print("\n" + "=" * 68)
     print("5. ЛУЧШАЯ МОДЕЛЬ И ЕЁ МЕТРИКИ")
     print("=" * 68)
     print(f"Лучший алгоритм: {MODEL_NAMES[best_name]}")
     print(f"Macro F1 на тесте: {table.iloc[0]['test_macro_f1']:.4f}")
     print("Это среднее F1 двух классов: обычных и мошеннических операций.")
 
-    print("\\nПоказатели по каждому классу:")
-    print(f"{'Класс':<24} {'Precision':>11} {'Recall':>9} {'F1':>9} {'Кол-во':>9}")
+    print("\nПоказатели по каждому классу:")
+    print(f"{'Класс':<24} {'Точность':>11} {'Полнота':>9} {'F1':>9} {'Кол-во':>9}")
     for key, title in [("0", "Легальные (0)"), ("1", "Мошеннические (1)")]:
         row = report[key]
         print(
@@ -320,12 +320,12 @@ def main():
             f"{int(row['support']):>9}"
         )
 
-    print("\\nЧто означают метрики:")
-    print("  Precision — доля правильных срабатываний среди предсказаний класса.")
-    print("  Recall — доля найденных объектов среди всех реальных объектов класса.")
+    print("\nЧто означают метрики:")
+    print("  Точность (Precision) — доля верных предсказаний среди объявленных классом.")
+    print("  Полнота (Recall) — доля найденных объектов данного класса.")
     print("  F1 — общая оценка точности и полноты.")
     print("  Кол-во — сколько объектов этого класса было в тестовой выборке.")
-    print(f"  Accuracy (общая доля правильных ответов): {report['accuracy']:.4f}")
+    print(f"  Доля правильных ответов (Accuracy): {report['accuracy']:.4f}")
     print(f"  Macro F1 (равный вес обоих классов): {report['macro avg']['f1-score']:.4f}")
     print("  При редком мошенничестве Macro F1 информативнее одной лишь Accuracy.")
 
@@ -335,7 +335,7 @@ def main():
     matrix = confusion_matrix(y_test, best_predictions, labels=[0, 1])
     tn, fp, fn, tp = matrix.ravel()
 
-    print("\\n" + "=" * 68)
+    print("\n" + "=" * 68)
     print("6. МАТРИЦА ОШИБОК ЛУЧШЕЙ МОДЕЛИ")
     print("=" * 68)
     print("                       Предсказано 0    Предсказано 1")
